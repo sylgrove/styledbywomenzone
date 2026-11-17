@@ -3,9 +3,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { getProductById, getProductsByBrand } from "@/data/products";
+import { mapProductRow, type Product, type ProductRow } from "@/data/products";
+import { createClient } from "@/utils/supabase/client";
 import SiteHeader from "@/components/site-header";
 import { readCart, writeCart } from "@/lib/cart";
 
@@ -25,7 +26,62 @@ const brandLinks = {
 
 export default function ProductDetailsPage() {
   const params = useParams<{ id: string }>();
-  const product = getProductById(params.id);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadProduct() {
+      setLoading(true);
+      setProduct(null);
+      setRelatedProducts([]);
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .eq("id", params.id)
+        .eq("is_published", true)
+        .maybeSingle();
+
+      if (!active) return;
+
+      if (error || !data) {
+        if (error) console.error("Product could not be loaded:", error.message);
+        setProduct(null);
+        setRelatedProducts([]);
+        setLoading(false);
+        return;
+      }
+
+      const current = mapProductRow(data as ProductRow);
+      setProduct(current);
+
+      const { data: relatedData, error: relatedError } = await supabase
+        .from("products")
+        .select("*")
+        .eq("brand", current.brand)
+        .eq("is_published", true)
+        .neq("id", current.id)
+        .order("created_at", { ascending: false })
+        .limit(4);
+
+      if (!active) return;
+
+      if (relatedError) {
+        console.error("Related products could not be loaded:", relatedError.message);
+        setRelatedProducts([]);
+      } else {
+        setRelatedProducts((relatedData ?? []).map((row) => mapProductRow(row as ProductRow)));
+      }
+
+      setLoading(false);
+    }
+
+    loadProduct();
+    return () => { active = false; };
+  }, [params.id]);
 
   const [quantity, setQuantity] = useState(1);
   const [selectedOption, setSelectedOption] = useState("");
@@ -33,13 +89,13 @@ export default function ProductDetailsPage() {
   const [optionError, setOptionError] = useState(false);
   const [imageZoomOpen, setImageZoomOpen] = useState(false);
 
-  const relatedProducts = useMemo(() => {
-    if (!product) return [];
-
-    return getProductsByBrand(product.brand)
-      .filter((item) => item.id !== product.id)
-      .slice(0, 4);
-  }, [product]);
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#fffdfa]">
+        <p className="text-xs tracking-widest text-[#9b858e]">LOADING PRODUCT...</p>
+      </main>
+    );
+  }
 
   if (!product) {
     return (
@@ -71,7 +127,9 @@ export default function ProductDetailsPage() {
   // Keep a safely narrowed reference for use inside functions.
   const currentProduct = product;
 
-  const options = currentProduct.options ?? currentProduct.sizeOptions ?? [];
+  const options = currentProduct.options.length > 0
+    ? currentProduct.options
+    : currentProduct.sizeOptions;
   const needsOption = options.length > 0;
 
   const discount = currentProduct.originalPrice
@@ -81,6 +139,8 @@ export default function ProductDetailsPage() {
     : 0;
 
   function addToCart() {
+    if (!currentProduct.available) return;
+
     if (needsOption && !selectedOption) {
       setOptionError(true);
       return;
@@ -284,10 +344,12 @@ export default function ProductDetailsPage() {
           <button
             type="button"
             onClick={addToCart}
-            className="mt-8 w-full bg-[#493638] px-8 py-5 text-[10px] tracking-[2px] text-white transition hover:bg-[#76575a]"
+            disabled={!currentProduct.available}
+            className="mt-8 w-full bg-[#493638] px-8 py-5 text-[10px] tracking-[2px] text-white transition hover:bg-[#76575a] disabled:cursor-not-allowed disabled:bg-gray-400"
           >
-            ADD TO BAG · ৳
-            {(currentProduct.price * quantity).toLocaleString("en-BD")}
+            {currentProduct.available
+              ? <>ADD TO BAG · ৳{(currentProduct.price * quantity).toLocaleString("en-BD")}</>
+              : "CURRENTLY OUT OF STOCK"}
           </button>
 
           {added && (

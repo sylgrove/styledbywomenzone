@@ -6,7 +6,6 @@ import AdminOrders from "./AdminOrders";
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
-  // Verify admin login
   const authClient = await createClient();
 
   const {
@@ -23,7 +22,6 @@ export default async function AdminDashboard() {
     redirect("/admin/login");
   }
 
-  // Connect to Supabase using the server-only service key
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -38,17 +36,12 @@ export default async function AdminDashboard() {
     },
   });
 
-  // Fetch orders, customers and order items
-  const { data: orders, error } = await supabase
+  const { data: orders, error: ordersError } = await supabase
     .from("orders")
     .select(
       `
       *,
-      customers (
-        full_name,
-        phone,
-        email
-      ),
+      customers (full_name, phone, email),
       order_items (
         product_name,
         brand,
@@ -61,11 +54,20 @@ export default async function AdminDashboard() {
     )
     .order("created_at", { ascending: false });
 
-  if (error) {
-    console.error("Admin orders error:", error.message);
+  if (ordersError) {
+    console.error("Admin orders error:", ordersError.message);
     throw new Error("Unable to load orders.");
   }
 
-  // Display the interactive admin dashboard
-  return <AdminOrders orders={orders ?? []} />;
+  const { data: products, error: productsError } = await supabase
+    .from("products")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (productsError) {
+    console.error("Admin products error:", productsError.message);
+    throw new Error("Unable to load products.");
+  }
+
+  return <AdminOrders orders={orders ?? []} products={products ?? []} />;
 }

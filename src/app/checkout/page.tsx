@@ -6,7 +6,8 @@ import Image from "next/image";
 
 import Link from "next/link";
 
-import { getProductById } from "@/data/products";
+import { mapProductRow, type Product, type ProductRow } from "@/data/products";
+import { createClient } from "@/utils/supabase/client";
 
 import SiteHeader from "@/components/site-header";
 
@@ -171,6 +172,8 @@ const districts: Record<string, string[]> = {
 export default function CheckoutPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
 
+  const [products, setProducts] = useState<Product[]>([]);
+
   const [loaded, setLoaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -194,33 +197,66 @@ export default function CheckoutPage() {
   const [notes, setNotes] = useState("");
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(CART_KEY);
+    let active = true;
 
-      const parsed = saved ? JSON.parse(saved) : [];
+    async function loadCheckoutProducts() {
+      let savedCart: CartItem[] = [];
 
-      if (Array.isArray(parsed)) setCart(parsed);
-    } catch {
-      setCart([]);
+      try {
+        const saved = localStorage.getItem(CART_KEY);
+        const parsed: unknown = saved ? JSON.parse(saved) : [];
+        if (Array.isArray(parsed)) {
+          savedCart = parsed.filter(
+            (item): item is CartItem =>
+              item !== null &&
+              typeof item === "object" &&
+              typeof item.productId === "string" &&
+              Number.isInteger(item.quantity) &&
+              item.quantity > 0 &&
+              typeof item.selectedOption === "string",
+          );
+        }
+      } catch {
+        savedCart = [];
+      }
+
+      const productIds = [...new Set(savedCart.map((item) => item.productId))];
+      let liveProducts: Product[] = [];
+
+      if (productIds.length > 0) {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("products")
+          .select("*")
+          .in("id", productIds)
+          .eq("is_published", true);
+
+        if (error) {
+          console.error("Checkout products could not be loaded:", error.message);
+        } else {
+          liveProducts = (data ?? []).map((row) => mapProductRow(row as ProductRow));
+        }
+      }
+
+      if (active) {
+        setCart(savedCart);
+        setProducts(liveProducts);
+        setLoaded(true);
+      }
     }
 
-    setLoaded(true);
+    loadCheckoutProducts();
+    return () => { active = false; };
   }, []);
 
-  const items = useMemo(
-    () =>
-      cart
+  const items = useMemo(() => {
+    const productsById = new Map(products.map((product) => [product.id, product] as const));
+    return cart
+      .map((item) => ({ ...item, product: productsById.get(item.productId) }))
+      .filter((item): item is CartItem & { product: Product } => Boolean(item.product));
+  }, [cart, products]);
 
-        .map((item) => ({
-          ...item,
-
-          product: getProductById(item.productId),
-        }))
-
-        .filter((item) => item.product),
-
-    [cart],
-  );
+  const unavailableItems = items.filter((item) => !item.product.available);
 
   const subtotal = items.reduce(
     (sum, item) => sum + item.product!.price * item.quantity,
@@ -238,6 +274,11 @@ export default function CheckoutPage() {
     event.preventDefault();
 
     if (items.length === 0 || submitting) return;
+
+    if (unavailableItems.length > 0) {
+      setSubmitError("One or more products are currently unavailable. Please remove them from your bag.");
+      return;
+    }
 
     setSubmitting(true);
     setSubmitError("");
@@ -631,6 +672,12 @@ export default function CheckoutPage() {
               </div>
             </div>
 
+            {unavailableItems.length > 0 && (
+              <p role="alert" className="mt-5 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                One or more products are currently unavailable. Please remove them from your bag before placing the order.
+              </p>
+            )}
+
             {submitError && (
               <p
                 role="alert"
@@ -642,7 +689,7 @@ export default function CheckoutPage() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || unavailableItems.length > 0}
               className="mt-7 w-full bg-[#302622] px-5 py-4 text-xs tracking-[0.2em] text-white transition hover:bg-[#59463d] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting

@@ -1,7 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import SiteHeader from "@/components/site-header";
-import { products } from "@/data/products";
+import { mapProductRow, type ProductRow } from "@/data/products";
+import { createClient } from "@/utils/supabase/server";
+
+export const dynamic = "force-dynamic";
 
 const brands = [
   {
@@ -42,14 +45,31 @@ const brands = [
   },
 ];
 
-const featuredProducts = [
-  products[0],
-  products[4],
-  products[11],
-  products[14],
+const featuredProductIds = [
+  "jahans-black-three-piece",
+  "womenzone-cuff-bracelets",
+  "pretty-finds-waterproof-kajal",
+  "pretty-finds-beauty-blender",
 ];
 
-export default function Home() {
+export default async function Home() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("products")
+    .select("*")
+    .eq("is_published", true)
+    .eq("available", true)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("Homepage products could not be loaded:", error.message);
+  }
+
+  const liveProducts = (data ?? []).map((row) => mapProductRow(row as ProductRow));
+  const featuredProducts = featuredProductIds
+    .map((id) => liveProducts.find((product) => product.id === id))
+    .filter((product): product is (typeof liveProducts)[number] => Boolean(product));
+
   return (
     <main className="min-h-screen bg-[#fffdfa] text-[#292321]">
       <div className="bg-[#392b2c] px-4 py-2 text-center text-[10px] tracking-[2px] text-white sm:text-xs">

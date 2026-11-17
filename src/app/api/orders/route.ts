@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { getProductById } from "@/data/products";
+import { mapProductRow, type ProductRow } from "@/data/products";
 
 export const runtime = "nodejs";
 
@@ -89,7 +89,38 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate each product and calculate prices from our catalogue
+    // Read the current published and available products from Supabase.
+    const productIds = [...new Set(
+      items
+        .map((item: { productId?: string }) => item?.productId)
+        .filter((id: unknown): id is string => typeof id === "string"),
+    )];
+
+    if (productIds.length === 0) {
+      return NextResponse.json(
+        { error: "One or more cart items are invalid." },
+        { status: 400 },
+      );
+    }
+
+    const { data: productRows, error: productsError } = await supabase
+      .from("products")
+      .select("*")
+      .in("id", productIds)
+      .eq("is_published", true)
+      .eq("available", true);
+
+    if (productsError) {
+      throw productsError;
+    }
+
+    const productsById = new Map<string, ReturnType<typeof mapProductRow>>();
+    for (const row of productRows ?? []) {
+      const product = mapProductRow(row as ProductRow);
+      productsById.set(product.id, product);
+    }
+
+    // Validate each product and calculate prices from the database, never browser-submitted prices.
     const orderItems: {
       product_id: string;
       product_name: string;
@@ -115,11 +146,11 @@ export async function POST(request: Request) {
         );
       }
 
-      const product = getProductById(item.productId);
+      const product = productsById.get(item.productId);
 
       if (!product) {
         return NextResponse.json(
-          { error: "A product in your cart could not be found." },
+          { error: "A product in your cart is no longer available. Please refresh your bag." },
           { status: 400 },
         );
       }

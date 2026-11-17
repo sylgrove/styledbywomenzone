@@ -2,9 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { getProductsByBrand, type Product, type ProductBrand } from "@/data/products";
+import { useEffect, useMemo, useState } from "react";
+import { mapProductRow, type Product, type ProductBrand, type ProductRow } from "@/data/products";
 import SiteHeader from "@/components/site-header";
+import { createClient } from "@/utils/supabase/client";
 
 export type BrandConfig = {
   brand: ProductBrand;
@@ -25,11 +26,48 @@ export type BrandConfig = {
 };
 
 export default function BrandStorefront({ config }: { config: BrandConfig }) {
-  const products = getProductsByBrand(config.brand);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const [sortOrder, setSortOrder] = useState("featured");
 
-  const categories = ["All", ...Array.from(new Set(products.map((product) => product.category)))];
+  useEffect(() => {
+    let active = true;
+
+    async function loadProducts() {
+      setLoading(true);
+      setLoadError("");
+
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .eq("brand", config.brand)
+        .eq("is_published", true)
+        .order("created_at", { ascending: false });
+
+      if (!active) return;
+
+      if (error) {
+        console.error("Brand products could not be loaded:", error.message);
+        setLoadError("We couldn't load this collection. Please refresh the page.");
+        setProducts([]);
+      } else {
+        setProducts((data ?? []).map((row) => mapProductRow(row as ProductRow)));
+      }
+
+      setLoading(false);
+    }
+
+    loadProducts();
+    return () => { active = false; };
+  }, [config.brand]);
+
+  const categories = useMemo(
+    () => ["All", ...Array.from(new Set(products.map((product) => product.category)))],
+    [products],
+  );
 
   const visibleProducts = useMemo(() => {
     const filtered = products.filter(
@@ -44,7 +82,7 @@ export default function BrandStorefront({ config }: { config: BrandConfig }) {
     });
   }, [activeCategory, products, sortOrder]);
 
-  const heroProduct = products[0];
+  const heroProduct = products.find((product) => product.available) ?? products[0];
 
   return (
     <main className={`min-h-screen ${config.pageBackground} text-[#332b28]`}>
@@ -57,30 +95,15 @@ export default function BrandStorefront({ config }: { config: BrandConfig }) {
         <div className="mx-auto grid max-w-7xl items-center md:grid-cols-2">
           <div className="px-6 py-16 sm:px-10 md:py-24 lg:px-16">
             <Image src={config.logo} alt={`${config.name} logo`} width={190} height={90} className="mb-8 h-16 w-auto object-contain object-left" />
-            <p className="mb-5 text-[10px] tracking-[3px] text-[#9b7770]">
-              {config.eyebrow}
-            </p>
-            <h1 className="max-w-xl font-serif text-5xl leading-[1.12] text-[#403431] sm:text-6xl lg:text-7xl">
-              {config.headline}
-            </h1>
-            <p className="mt-6 max-w-lg text-sm leading-8 text-[#766b65]">
-              {config.intro}
-            </p>
-            <a href="#collection" className={`mt-8 inline-flex px-7 py-4 text-[10px] tracking-[2px] text-white transition hover:opacity-85 ${config.button}`}>
-              EXPLORE COLLECTION
-            </a>
+            <p className="mb-5 text-[10px] tracking-[3px] text-[#9b7770]">{config.eyebrow}</p>
+            <h1 className="max-w-xl font-serif text-5xl leading-[1.12] text-[#403431] sm:text-6xl lg:text-7xl">{config.headline}</h1>
+            <p className="mt-6 max-w-lg text-sm leading-8 text-[#766b65]">{config.intro}</p>
+            <a href="#collection" className={`mt-8 inline-flex px-7 py-4 text-[10px] tracking-[2px] text-white transition hover:opacity-85 ${config.button}`}>EXPLORE COLLECTION</a>
           </div>
 
           <div className="relative min-h-[340px] sm:min-h-[480px] md:min-h-[620px]">
             {heroProduct ? (
-              <Image
-                src={heroProduct.image}
-                alt={heroProduct.name}
-                fill
-                priority
-                sizes="(max-width: 768px) 100vw, 50vw"
-                className="object-cover"
-              />
+              <Image src={heroProduct.image} alt={heroProduct.name} fill priority sizes="(max-width: 768px) 100vw, 50vw" className="object-cover" />
             ) : (
               <div className="flex min-h-[340px] h-full items-center justify-center bg-[#e9e0d3] p-10 sm:min-h-[480px]">
                 <Image src={config.logo} alt={config.name} width={300} height={180} className="h-auto max-h-48 w-auto object-contain" />
@@ -121,27 +144,24 @@ export default function BrandStorefront({ config }: { config: BrandConfig }) {
 
           <div className="mb-8 flex flex-wrap gap-2">
             {categories.map((category) => (
-              <button
-                key={category}
-                type="button"
-                onClick={() => setActiveCategory(category)}
-                className={`border px-4 py-2.5 text-xs transition ${activeCategory === category ? `${config.button} border-transparent text-white` : "border-[#d9cbc2] bg-white text-[#6f625c] hover:border-[#a9897d]"}`}
-              >
+              <button key={category} type="button" onClick={() => setActiveCategory(category)} className={`border px-4 py-2.5 text-xs transition ${activeCategory === category ? `${config.button} border-transparent text-white` : "border-[#d9cbc2] bg-white text-[#6f625c] hover:border-[#a9897d]"}`}>
                 {category}
               </button>
             ))}
           </div>
 
           <div className="mb-5 flex items-center justify-between text-xs text-[#887a73]">
-            <span>{visibleProducts.length} product{visibleProducts.length === 1 ? "" : "s"}</span>
+            <span>{loading ? "Loading products..." : `${visibleProducts.length} product${visibleProducts.length === 1 ? "" : "s"}`}</span>
             {activeCategory !== "All" && <button type="button" onClick={() => setActiveCategory("All")} className="underline underline-offset-4">Clear filter</button>}
           </div>
 
-          {visibleProducts.length > 0 ? (
+          {loadError ? (
+            <p role="alert" className="border border-red-200 bg-white px-5 py-8 text-center text-sm text-red-700">{loadError}</p>
+          ) : loading ? (
+            <p className="border border-dashed border-[#d9cbc2] bg-white px-5 py-16 text-center text-sm text-[#887a73]">Loading the collection...</p>
+          ) : visibleProducts.length > 0 ? (
             <div className="grid grid-cols-2 gap-x-4 gap-y-9 sm:grid-cols-2 sm:gap-x-6 lg:grid-cols-3 xl:grid-cols-4">
-              {visibleProducts.map((product) => (
-                <ProductCard key={product.id} product={product} config={config} />
-              ))}
+              {visibleProducts.map((product) => <ProductCard key={product.id} product={product} config={config} />)}
             </div>
           ) : (
             <p className="border border-dashed border-[#d9cbc2] bg-white px-5 py-16 text-center text-sm text-[#887a73]">No products are listed in this collection yet.</p>
@@ -171,14 +191,9 @@ function ProductCard({ product, config }: { product: Product; config: BrandConfi
   return (
     <article className="group min-w-0">
       <Link href={`/product/${product.id}`} className="relative block aspect-[4/5] overflow-hidden bg-[#eee7e2]">
-        <Image
-          src={product.image}
-          alt={product.name}
-          fill
-          sizes="(max-width: 640px) 50vw, (max-width: 1280px) 33vw, 25vw"
-          className="object-cover transition duration-700 group-hover:scale-105"
-        />
+        <Image src={product.image} alt={product.name} fill sizes="(max-width: 640px) 50vw, (max-width: 1280px) 33vw, 25vw" className="object-cover transition duration-700 group-hover:scale-105" />
         {product.badge && <span className="absolute left-2 top-2 bg-white/95 px-2 py-2 text-[8px] tracking-wide text-[#725a54] sm:left-3 sm:top-3 sm:px-3">{product.badge}</span>}
+        {!product.available && <span className="absolute bottom-2 left-2 bg-black/75 px-3 py-2 text-[8px] tracking-[1.5px] text-white">OUT OF STOCK</span>}
       </Link>
       <div className="pt-4">
         <p className="text-[8px] tracking-[1.5px] text-[#9b7770] sm:text-[9px]">{product.category.toUpperCase()}</p>
